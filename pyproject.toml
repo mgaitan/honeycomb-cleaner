@@ -24,5 +24,7 @@ CI = "https://github.com/mgaitan/honeycomb-cleaner/actions/workflows/ci.yml"
 [dependency-groups]
 dev = [
     "pytest>=8.4.1",
+    "pytest-mock>=3.14.1",
+    "responses>=0.25.7",
     "ruff>=0.12.2",
 ]

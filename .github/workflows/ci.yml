@@ -30,4 +30,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - run: UV_PYTHON=${{ matrix.python-version }} uv run pytest
+      - run: uv run -p ${{ matrix.python-version }} pytest
