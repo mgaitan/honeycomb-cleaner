@@ -1,0 +1,15 @@
+[project]
+name = "honeycomb-cleaner"
+version = "0.1.0"
+description = "Clean up inactive datasets and columns in Honeycomb"
+readme = "README.md"
+authors = [{ name = "Martín Gaitán", email = "gaitan@gmail.com" }]
+requires-python = ">=3.12"
+dependencies = ["requests>=2.31.0", "rich>=13.0.0"]
+
+[project.scripts]
+honeycomb-cleaner = "honeycomb_cleaner:main"
+
+[build-system]
+requires = ["uv_build>=0.7.19,<0.8"]
+build-backend = "uv_build"
