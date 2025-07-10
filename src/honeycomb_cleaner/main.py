@@ -2,180 +2,17 @@ import argparse
 import os
 import sys
 from datetime import datetime, timedelta
-from typing import Dict, List
 
-import requests
 from rich.console import Console
 from rich.prompt import Prompt
 from rich.table import Table
 
+from .client import HoneycombClient
+
 console = Console()
 
 
-class HoneycombClient:
-    """Client for interacting with Honeycomb API"""
-
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-        self.session = requests.Session()
-        self.session.headers.update({"X-Honeycomb-Team": api_key, "Content-Type": "application/json"})
-
-    def get_environment_info(self) -> Dict:
-        """Fetch environment information"""
-        url = "https://api.honeycomb.io/1/auth"
-
-        try:
-            response = self.session.get(url)
-            response.raise_for_status()
-            auth_info = response.json()
-            return {
-                "environment": auth_info.get("environment", {"name": "Unknown", "slug": "unknown"}),
-                "team": auth_info.get("team", {"name": "Unknown", "slug": "unknown"}),
-            }
-        except requests.exceptions.RequestException as e:
-            print(f"Error fetching environment info: {e}")
-            return {
-                "environment": {"name": "Unknown", "slug": "unknown"},
-                "team": {"name": "Unknown", "slug": "unknown"},
-            }
-
-    def get_columns(self, dataset_slug: str) -> List[Dict]:
-        """Fetch all columns for a dataset"""
-        url = f"https://api.honeycomb.io/1/columns/{dataset_slug}"
-
-        try:
-            response = self.session.get(url)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            if hasattr(e, "response") and e.response.status_code == 401:
-                print(f"Error fetching columns for {dataset_slug}: Unauthorized (401)")
-                print("  → API key may lack 'Manage Queries and Columns' permission")
-            else:
-                print(f"Error fetching columns for {dataset_slug}: {e}")
-            return []
-
-    def delete_column(self, dataset_slug: str, column_id: str) -> bool:
-        """Delete a column from a dataset"""
-        url = f"https://api.honeycomb.io/1/columns/{dataset_slug}/{column_id}"
-
-        try:
-            response = self.session.delete(url)
-            response.raise_for_status()
-            return True
-        except requests.exceptions.RequestException as e:
-            if hasattr(e, "response"):
-                status_code = e.response.status_code
-                print(f"FAILED - Error {status_code} deleting column {column_id}")
-                try:
-                    error_details = e.response.json()
-                    if "error" in error_details:
-                        print(f"  → {error_details['error']}")
-                except (ValueError, KeyError):
-                    pass
-            else:
-                print(f"FAILED - Error deleting column {column_id}: {e}")
-            return False
-
-    def get_datasets(self) -> List[Dict]:
-        """Fetch all datasets from Honeycomb"""
-        url = "https://api.honeycomb.io/1/datasets"
-
-        try:
-            response = self.session.get(url)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            print(f"Error fetching datasets: {e}")
-            sys.exit(1)
-
-    def disable_deletion_protection(self, dataset_slug: str) -> bool:
-        """Disable deletion protection for a dataset"""
-        url = f"https://api.honeycomb.io/1/datasets/{dataset_slug}"
-
-        payload = {"settings": {"delete_protected": False}}
-
-        try:
-            response = self.session.put(url, json=payload)
-            response.raise_for_status()
-            return True
-        except requests.exceptions.RequestException as e:
-            if hasattr(e, "response"):
-                status_code = e.response.status_code
-                print(f"FAILED - Error {status_code} disabling protection for {dataset_slug}")
-            else:
-                print(f"FAILED - Error disabling protection for {dataset_slug}: {e}")
-            return False
-
-    def delete_dataset(self, dataset_slug: str, disable_protection: bool = False) -> bool:
-        """Delete a dataset, optionally disabling deletion protection first"""
-        url = f"https://api.honeycomb.io/1/datasets/{dataset_slug}"
-
-        try:
-            response = self.session.delete(url)
-            response.raise_for_status()
-            return True
-        except requests.exceptions.RequestException as e:
-            return self._handle_delete_error(e, dataset_slug, url, disable_protection)
-
-    def _handle_delete_error(self, e, dataset_slug: str, url: str, disable_protection: bool) -> bool:
-        """Handle deletion errors with protection retry logic"""
-        if not hasattr(e, "response"):
-            print(f"FAILED - Error deleting {dataset_slug}: {e}")
-            return False
-
-        status_code = e.response.status_code
-
-        # Try to handle deletion protection
-        if status_code == 409 and disable_protection and self._is_deletion_protected(e.response):
-            return self._retry_delete_after_unprotect(dataset_slug, url)
-
-        # Handle other errors
-        self._print_delete_error(e.response, dataset_slug)
-        return False
-
-    def _is_deletion_protected(self, response) -> bool:
-        """Check if error is due to deletion protection"""
-        if response.text and "delete protected" in response.text.lower():
-            return True
-
-        try:
-            error_details = response.json()
-            return "error" in error_details and "delete protected" in error_details["error"].lower()
-        except (ValueError, KeyError):
-            return False
-
-    def _retry_delete_after_unprotect(self, dataset_slug: str, url: str) -> bool:
-        """Disable protection and retry deletion"""
-        print("deletion protection detected, disabling... ", end="", flush=True)
-
-        if not self.disable_deletion_protection(dataset_slug):
-            return False
-
-        print("retrying delete... ", end="", flush=True)
-        try:
-            response = self.session.delete(url)
-            response.raise_for_status()
-            return True
-        except requests.exceptions.RequestException as retry_e:
-            if hasattr(retry_e, "response"):
-                print(f"FAILED - Error {retry_e.response.status_code} on retry")
-            else:
-                print(f"FAILED - Error on retry: {retry_e}")
-            return False
-
-    def _print_delete_error(self, response, dataset_slug: str):
-        """Print formatted deletion error"""
-        print(f"FAILED - Error {response.status_code} deleting {dataset_slug}")
-        try:
-            error_details = response.json()
-            if "error" in error_details:
-                print(f"  → {error_details['error']}")
-        except (ValueError, KeyError):
-            pass
-
-
-def is_column_inactive(column: Dict, days: int) -> bool:
+def is_column_inactive(column: dict, days: int) -> bool:
     """Check if a column is inactive based on last_written timestamp"""
     last_written = column.get("last_written")
     if not last_written:
@@ -186,11 +23,13 @@ def is_column_inactive(column: Dict, days: int) -> bool:
         cutoff_date = datetime.now(last_written_dt.tzinfo) - timedelta(days=days)
         return last_written_dt < cutoff_date
     except (ValueError, TypeError):
-        print(f"Warning: Could not parse last_written for column {column.get('key_name', 'unknown')}")
+        print(
+            f"Warning: Could not parse last_written for column {column.get('key_name', 'unknown')}"
+        )
         return True
 
 
-def is_dataset_inactive(dataset: Dict, days: int) -> bool:
+def is_dataset_inactive(dataset: dict, days: int) -> bool:
     """Check if a dataset is inactive based on last_written_at timestamp"""
     last_written = dataset.get("last_written_at")
 
@@ -206,13 +45,15 @@ def is_dataset_inactive(dataset: Dict, days: int) -> bool:
         return last_written_dt < cutoff_date
     except (ValueError, TypeError):
         # If we can't parse the date, consider it inactive
-        print(f"Warning: Could not parse last_written_at for dataset {dataset.get('name', 'unknown')}")
+        print(
+            f"Warning: Could not parse last_written_at for dataset {dataset.get('name', 'unknown')}"
+        )
         return True
 
 
-def format_date(date_str: str) -> str:
+def format_date(date_str: str | None) -> str:
     """Format date string for display"""
-    if not date_str or date_str == "null":
+    if date_str == "null":
         return "Never"
     try:
         dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
@@ -221,7 +62,7 @@ def format_date(date_str: str) -> str:
         return "Unknown"
 
 
-def get_dataset_url(dataset: Dict, team_slug: str, env_slug: str) -> str:
+def get_dataset_url(dataset: dict, team_slug: str, env_slug: str) -> str:
     """Get the canonical URL for a dataset"""
     slug = dataset.get("slug", "")
     if not slug:
@@ -230,7 +71,9 @@ def get_dataset_url(dataset: Dict, team_slug: str, env_slug: str) -> str:
     return f"https://ui.honeycomb.io/{team_slug}/environments/{env_slug}/datasets/{slug}/home"
 
 
-def display_datasets_table(datasets: List[Dict], title: str, team_slug: str, env_slug: str):
+def display_datasets_table(
+    datasets: list[dict], title: str, team_slug: str, env_slug: str
+):
     """Display datasets in a formatted table"""
     table = Table(title=title)
     table.add_column("Name", style="cyan", no_wrap=True)
@@ -249,7 +92,7 @@ def display_datasets_table(datasets: List[Dict], title: str, team_slug: str, env
     console.print(table)
 
 
-def display_columns_table(columns: List[Dict], title: str, dataset_name: str):
+def display_columns_table(columns: list[dict], title: str, dataset_name: str):
     """Display columns in a formatted table"""
     # Limit to first 100 columns for performance
     LIMIT = 150
@@ -279,10 +122,14 @@ def display_columns_table(columns: List[Dict], title: str, dataset_name: str):
     console.print(table)
 
     if total_columns > 100:
-        print(f"... and {total_columns - 100} more columns (use --delete-columns to see deletion progress)")
+        print(
+            f"... and {total_columns - 100} more columns (use --delete-columns to see deletion progress)"
+        )
 
 
-def check_columns_for_dataset(client: HoneycombClient, dataset: Dict, days: int) -> Dict:
+def check_columns_for_dataset(
+    client: HoneycombClient, dataset: dict, days: int
+) -> dict:
     """Check columns for a single dataset and return active/inactive counts"""
     dataset_name = dataset.get("name", "Unknown")
     dataset_slug = dataset.get("slug", "")
@@ -315,11 +162,20 @@ def check_columns_for_dataset(client: HoneycombClient, dataset: Dict, days: int)
 
 def parse_arguments():
     """Parse command line arguments"""
-    parser = argparse.ArgumentParser(description="Clean up inactive Honeycomb datasets and columns")
-    parser.add_argument("--days", type=int, default=60, help="Days to look back for activity (default: 60)")
+    parser = argparse.ArgumentParser(
+        description="Clean up inactive Honeycomb datasets and columns"
+    )
+    parser.add_argument(
+        "--days",
+        type=int,
+        default=60,
+        help="Days to look back for activity (default: 60)",
+    )
     parser.add_argument("--delete", action="store_true", help="Enable deletion mode")
     parser.add_argument(
-        "--delete-protected", action="store_true", help="Also delete datasets with deletion protection enabled"
+        "--delete-protected",
+        action="store_true",
+        help="Also delete datasets with deletion protection enabled",
     )
     parser.add_argument(
         "--name",
@@ -327,11 +183,19 @@ def parse_arguments():
         action="append",
         help="Only consider datasets with these names for deletion (can be used multiple times)",
     )
-    parser.add_argument("--check-columns", action="store_true", help="Check for unused columns in active datasets")
     parser.add_argument(
-        "--delete-columns", action="store_true", help="Enable deletion of unused columns (requires --check-columns)"
+        "--check-columns",
+        action="store_true",
+        help="Check for unused columns in active datasets",
     )
-    parser.add_argument("--api-key", type=str, help="Honeycomb API key (overrides env var)")
+    parser.add_argument(
+        "--delete-columns",
+        action="store_true",
+        help="Enable deletion of unused columns (requires --check-columns)",
+    )
+    parser.add_argument(
+        "--api-key", type=str, help="Honeycomb API key (overrides env var)"
+    )
     return parser.parse_args()
 
 
@@ -339,7 +203,9 @@ def setup_client(args):
     """Setup Honeycomb client with API key validation"""
     api_key = args.api_key or os.getenv("HONEYCOMB_API_KEY")
     if not api_key:
-        print("Error: HONEYCOMB_API_KEY environment variable not set and --api-key not provided")
+        print(
+            "Error: HONEYCOMB_API_KEY environment variable not set and --api-key not provided"
+        )
         print("Set it with: export HONEYCOMB_API_KEY=your_api_key_here")
         sys.exit(1)
 
@@ -370,7 +236,9 @@ def categorize_datasets(datasets, args):
 
 def process_column_cleanup(client, active_datasets, args):
     """Process column cleanup for active datasets"""
-    print(f"\nChecking columns in active datasets for inactivity over {args.days} days...")
+    print(
+        f"\nChecking columns in active datasets for inactivity over {args.days} days..."
+    )
     print(f"Processing {len(active_datasets)} active datasets...")
 
     total_inactive_columns = 0
@@ -379,10 +247,14 @@ def process_column_cleanup(client, active_datasets, args):
     for i, dataset in enumerate(active_datasets):
         dataset_name = dataset.get("name", "Unknown")
         dataset_slug = dataset.get("slug", "")
-        print(f"  [{i + 1}/{len(active_datasets)}] Checking {dataset_name} ({dataset_slug})...")
+        print(
+            f"  [{i + 1}/{len(active_datasets)}] Checking {dataset_name} ({dataset_slug})..."
+        )
 
         result = check_columns_for_dataset(client, dataset, args.days)
-        print(f"    Found {result['active']} active, {result['inactive']} inactive columns")
+        print(
+            f"    Found {result['active']} active, {result['inactive']} inactive columns"
+        )
 
         if result["inactive"] > 0:
             datasets_with_inactive_columns.append(result)
@@ -390,15 +262,21 @@ def process_column_cleanup(client, active_datasets, args):
 
             # Display inactive columns for this dataset
             display_columns_table(
-                result["inactive_columns"], f"Inactive columns (last {args.days} days)", result["dataset_name"]
+                result["inactive_columns"],
+                f"Inactive columns (last {args.days} days)",
+                result["dataset_name"],
             )
 
-    print(f"\nFound {total_inactive_columns} inactive columns across {len(datasets_with_inactive_columns)} datasets")
+    print(
+        f"\nFound {total_inactive_columns} inactive columns across {len(datasets_with_inactive_columns)} datasets"
+    )
 
     if total_inactive_columns > 0 and args.delete_columns:
         delete_columns(client, datasets_with_inactive_columns, total_inactive_columns)
     elif total_inactive_columns > 0:
-        print(f"\nTo delete these columns, run: honeycomb-cleaner --check-columns --delete-columns --days {args.days}")
+        print(
+            f"\nTo delete these columns, run: honeycomb-cleaner --check-columns --delete-columns --days {args.days}"
+        )
 
 
 def delete_columns(client, datasets_with_inactive_columns, total_inactive_columns):
@@ -491,28 +369,44 @@ def main():
     env_slug = env_info.get("slug", "unknown")
     team_slug = team_info.get("slug", "unknown")
 
-    console.print(f"[bold blue]Honeycomb Environment:[/bold blue] [green]{env_name}[/green]")
-    console.print(f"[bold blue]Fetching datasets and checking for inactivity over {args.days} days...[/bold blue]")
+    console.print(
+        f"[bold blue]Honeycomb Environment:[/bold blue] [green]{env_name}[/green]"
+    )
+    console.print(
+        f"[bold blue]Fetching datasets and checking for inactivity over {args.days} days...[/bold blue]"
+    )
 
     # Get and categorize datasets
     datasets = client.get_datasets()
-    active_datasets, inactive_datasets, filtered_out_datasets = categorize_datasets(datasets, args)
+    active_datasets, inactive_datasets, filtered_out_datasets = categorize_datasets(
+        datasets, args
+    )
 
     # Display results
     print(f"\nFound {len(active_datasets)} active datasets")
     if active_datasets:
-        display_datasets_table(active_datasets, f"Active datasets (last {args.days} days)", team_slug, env_slug)
+        display_datasets_table(
+            active_datasets,
+            f"Active datasets (last {args.days} days)",
+            team_slug,
+            env_slug,
+        )
 
     print(f"\nFound {len(inactive_datasets)} inactive datasets")
     if args.name:
-        print(f"Filtered out {len(filtered_out_datasets)} datasets (not in specified list)")
+        print(
+            f"Filtered out {len(filtered_out_datasets)} datasets (not in specified list)"
+        )
 
     if not inactive_datasets:
         print("No inactive datasets found. Nothing to clean up!")
 
     if inactive_datasets:
         display_datasets_table(
-            inactive_datasets, f"Datasets with no activity in the last {args.days} days", team_slug, env_slug
+            inactive_datasets,
+            f"Datasets with no activity in the last {args.days} days",
+            team_slug,
+            env_slug,
         )
 
     # Process column cleanup if requested
@@ -523,8 +417,6 @@ def main():
     if args.delete and inactive_datasets:
         delete_datasets(client, inactive_datasets, args)
     elif args.delete and not inactive_datasets:
-        print(f"\nTo delete datasets, run: honeycomb-cleaner --days {args.days} --delete")
-
-
-if __name__ == "__main__":
-    main()
+        print(
+            f"\nTo delete datasets, run: honeycomb-cleaner --days {args.days} --delete"
+        )
