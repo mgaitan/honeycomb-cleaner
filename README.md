@@ -1,5 +1,10 @@
 # Honeycomb Cleaner
 
+[![PyPI](https://img.shields.io/pypi/v/honeycomb-cleaner.svg)](https://pypi.org/project/honeycomb-cleaner/)
+[![Changelog](https://img.shields.io/github/v/release/mgaitan/honeycomb-cleaner?include_prereleases&label=changelog)](https://github.com/mgaitan/honeycomb-cleaner/releases)
+[![Tests](https://github.com/mgaitan/honeycomb-cleaner/actions/workflows/ci.yml/badge.svg)](https://github.com/mgaitan/honeycomb-cleaner/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/mgaitan/honeycomb-cleaner/blob/main/LICENSE)
+
 A command-line tool to clean up inactive datasets and columns in Honeycomb to reduce clutter and improve performance.
 
 ## Features
@@ -193,10 +198,10 @@ For datasets with many columns (>100), only the first 100 are displayed in table
 To run from source:
 ```bash
 cd honeycomb-cleaner
-uv pip install -e .
+uv sync --dev
 honeycomb-cleaner --help
 ```
 
 ## License
 
-This project is part of the Shiphero monorepo and follows the same license terms.
+License under Apache 2.0 . See LICENSE file.

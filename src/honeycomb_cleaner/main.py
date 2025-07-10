@@ -2,12 +2,12 @@ import argparse
 import os
 import sys
 from datetime import datetime, timedelta
-from typing import List, Dict
+from typing import Dict, List
 
 import requests
 from rich.console import Console
-from rich.table import Table
 from rich.prompt import Prompt
+from rich.table import Table
 
 console = Console()
 
@@ -18,10 +18,7 @@ class HoneycombClient:
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.session = requests.Session()
-        self.session.headers.update({
-            "X-Honeycomb-Team": api_key,
-            "Content-Type": "application/json"
-        })
+        self.session.headers.update({"X-Honeycomb-Team": api_key, "Content-Type": "application/json"})
 
     def get_environment_info(self) -> Dict:
         """Fetch environment information"""
@@ -33,13 +30,13 @@ class HoneycombClient:
             auth_info = response.json()
             return {
                 "environment": auth_info.get("environment", {"name": "Unknown", "slug": "unknown"}),
-                "team": auth_info.get("team", {"name": "Unknown", "slug": "unknown"})
+                "team": auth_info.get("team", {"name": "Unknown", "slug": "unknown"}),
             }
         except requests.exceptions.RequestException as e:
             print(f"Error fetching environment info: {e}")
             return {
                 "environment": {"name": "Unknown", "slug": "unknown"},
-                "team": {"name": "Unknown", "slug": "unknown"}
+                "team": {"name": "Unknown", "slug": "unknown"},
             }
 
     def get_columns(self, dataset_slug: str) -> List[Dict]:
@@ -51,9 +48,9 @@ class HoneycombClient:
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            if hasattr(e, 'response') and e.response.status_code == 401:
+            if hasattr(e, "response") and e.response.status_code == 401:
                 print(f"Error fetching columns for {dataset_slug}: Unauthorized (401)")
-                print(f"  → API key may lack 'Manage Queries and Columns' permission")
+                print("  → API key may lack 'Manage Queries and Columns' permission")
             else:
                 print(f"Error fetching columns for {dataset_slug}: {e}")
             return []
@@ -67,14 +64,14 @@ class HoneycombClient:
             response.raise_for_status()
             return True
         except requests.exceptions.RequestException as e:
-            if hasattr(e, 'response'):
+            if hasattr(e, "response"):
                 status_code = e.response.status_code
                 print(f"FAILED - Error {status_code} deleting column {column_id}")
                 try:
                     error_details = e.response.json()
-                    if 'error' in error_details:
+                    if "error" in error_details:
                         print(f"  → {error_details['error']}")
-                except:
+                except (ValueError, KeyError):
                     pass
             else:
                 print(f"FAILED - Error deleting column {column_id}: {e}")
@@ -96,43 +93,19 @@ class HoneycombClient:
         """Disable deletion protection for a dataset"""
         url = f"https://api.honeycomb.io/1/datasets/{dataset_slug}"
 
-        payload = {
-            "settings": {
-                "delete_protected": False
-            }
-        }
+        payload = {"settings": {"delete_protected": False}}
 
         try:
             response = self.session.put(url, json=payload)
             response.raise_for_status()
             return True
         except requests.exceptions.RequestException as e:
-            if hasattr(e, 'response'):
+            if hasattr(e, "response"):
                 status_code = e.response.status_code
                 print(f"FAILED - Error {status_code} disabling protection for {dataset_slug}")
             else:
                 print(f"FAILED - Error disabling protection for {dataset_slug}: {e}")
             return False
-
-
-def is_column_inactive(column: Dict, days: int) -> bool:
-    """Check if a column is inactive based on last_written timestamp"""
-    last_written = column.get("last_written")
-
-    if not last_written:
-        # No last_written means the column was never used
-        return True
-
-    try:
-        # Parse the timestamp (assuming ISO format)
-        last_written_dt = datetime.fromisoformat(last_written.replace('Z', '+00:00'))
-        cutoff_date = datetime.now(last_written_dt.tzinfo) - timedelta(days=days)
-
-        return last_written_dt < cutoff_date
-    except (ValueError, TypeError):
-        # If we can't parse the date, consider it inactive
-        print(f"Warning: Could not parse last_written for column {column.get('key_name', 'unknown')}")
-        return True
 
     def delete_dataset(self, dataset_slug: str, disable_protection: bool = False) -> bool:
         """Delete a dataset, optionally disabling deletion protection first"""
@@ -143,51 +116,78 @@ def is_column_inactive(column: Dict, days: int) -> bool:
             response.raise_for_status()
             return True
         except requests.exceptions.RequestException as e:
-            if hasattr(e, 'response'):
-                status_code = e.response.status_code
+            return self._handle_delete_error(e, dataset_slug, url, disable_protection)
 
-                # If deletion protection error and flag is enabled, try to disable it
-                is_protected = False
-                if status_code == 409 and disable_protection and hasattr(e, 'response'):
-                    # Check both text and JSON for deletion protection indicators
-                    if e.response.text and 'delete protected' in e.response.text.lower():
-                        is_protected = True
-                    else:
-                        try:
-                            error_details = e.response.json()
-                            if 'error' in error_details and 'delete protected' in error_details['error'].lower():
-                                is_protected = True
-                        except:
-                            pass
-
-                if is_protected:
-                    print(f"deletion protection detected, disabling... ", end="", flush=True)
-
-                    if self.disable_deletion_protection(dataset_slug):
-                        print(f"retrying delete... ", end="", flush=True)
-                        try:
-                            response = self.session.delete(url)
-                            response.raise_for_status()
-                            return True
-                        except requests.exceptions.RequestException as retry_e:
-                            if hasattr(retry_e, 'response'):
-                                print(f"FAILED - Error {retry_e.response.status_code} on retry")
-                            else:
-                                print(f"FAILED - Error on retry: {retry_e}")
-                            return False
-                    else:
-                        return False
-
-                print(f"FAILED - Error {status_code} deleting {dataset_slug}")
-                try:
-                    error_details = e.response.json()
-                    if 'error' in error_details:
-                        print(f"  → {error_details['error']}")
-                except:
-                    pass
-            else:
-                print(f"FAILED - Error deleting {dataset_slug}: {e}")
+    def _handle_delete_error(self, e, dataset_slug: str, url: str, disable_protection: bool) -> bool:
+        """Handle deletion errors with protection retry logic"""
+        if not hasattr(e, "response"):
+            print(f"FAILED - Error deleting {dataset_slug}: {e}")
             return False
+
+        status_code = e.response.status_code
+
+        # Try to handle deletion protection
+        if status_code == 409 and disable_protection and self._is_deletion_protected(e.response):
+            return self._retry_delete_after_unprotect(dataset_slug, url)
+
+        # Handle other errors
+        self._print_delete_error(e.response, dataset_slug)
+        return False
+
+    def _is_deletion_protected(self, response) -> bool:
+        """Check if error is due to deletion protection"""
+        if response.text and "delete protected" in response.text.lower():
+            return True
+
+        try:
+            error_details = response.json()
+            return "error" in error_details and "delete protected" in error_details["error"].lower()
+        except (ValueError, KeyError):
+            return False
+
+    def _retry_delete_after_unprotect(self, dataset_slug: str, url: str) -> bool:
+        """Disable protection and retry deletion"""
+        print("deletion protection detected, disabling... ", end="", flush=True)
+
+        if not self.disable_deletion_protection(dataset_slug):
+            return False
+
+        print("retrying delete... ", end="", flush=True)
+        try:
+            response = self.session.delete(url)
+            response.raise_for_status()
+            return True
+        except requests.exceptions.RequestException as retry_e:
+            if hasattr(retry_e, "response"):
+                print(f"FAILED - Error {retry_e.response.status_code} on retry")
+            else:
+                print(f"FAILED - Error on retry: {retry_e}")
+            return False
+
+    def _print_delete_error(self, response, dataset_slug: str):
+        """Print formatted deletion error"""
+        print(f"FAILED - Error {response.status_code} deleting {dataset_slug}")
+        try:
+            error_details = response.json()
+            if "error" in error_details:
+                print(f"  → {error_details['error']}")
+        except (ValueError, KeyError):
+            pass
+
+
+def is_column_inactive(column: Dict, days: int) -> bool:
+    """Check if a column is inactive based on last_written timestamp"""
+    last_written = column.get("last_written")
+    if not last_written:
+        return True
+
+    try:
+        last_written_dt = datetime.fromisoformat(last_written.replace("Z", "+00:00"))
+        cutoff_date = datetime.now(last_written_dt.tzinfo) - timedelta(days=days)
+        return last_written_dt < cutoff_date
+    except (ValueError, TypeError):
+        print(f"Warning: Could not parse last_written for column {column.get('key_name', 'unknown')}")
+        return True
 
 
 def is_dataset_inactive(dataset: Dict, days: int) -> bool:
@@ -200,7 +200,7 @@ def is_dataset_inactive(dataset: Dict, days: int) -> bool:
 
     try:
         # Parse the timestamp (assuming ISO format)
-        last_written_dt = datetime.fromisoformat(last_written.replace('Z', '+00:00'))
+        last_written_dt = datetime.fromisoformat(last_written.replace("Z", "+00:00"))
         cutoff_date = datetime.now(last_written_dt.tzinfo) - timedelta(days=days)
 
         return last_written_dt < cutoff_date
@@ -215,8 +215,8 @@ def format_date(date_str: str) -> str:
     if not date_str or date_str == "null":
         return "Never"
     try:
-        dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
-        return dt.strftime('%Y-%m-%d')
+        dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+        return dt.strftime("%Y-%m-%d")
     except (ValueError, TypeError):
         return "Unknown"
 
@@ -244,12 +244,7 @@ def display_datasets_table(datasets: List[Dict], title: str, team_slug: str, env
         last_activity = format_date(dataset.get("last_written_at", ""))
         url = get_dataset_url(dataset, team_slug, env_slug)
 
-        table.add_row(
-            name,
-            created,
-            last_activity,
-            url
-        )
+        table.add_row(name, created, last_activity, url)
 
     console.print(table)
 
@@ -279,13 +274,7 @@ def display_columns_table(columns: List[Dict], title: str, dataset_name: str):
         last_used = format_date(column.get("last_written"))
         hidden = "Yes" if column.get("hidden", False) else "No"
 
-        table.add_row(
-            key_name,
-            col_type,
-            created,
-            last_used,
-            hidden
-        )
+        table.add_row(key_name, col_type, created, last_used, hidden)
 
     console.print(table)
 
@@ -320,7 +309,7 @@ def check_columns_for_dataset(client: HoneycombClient, dataset: Dict, days: int)
         "inactive": len(inactive_columns),
         "inactive_columns": inactive_columns,
         "dataset_name": dataset_name,
-        "dataset_slug": dataset_slug
+        "dataset_slug": dataset_slug,
     }
 
 
@@ -329,10 +318,19 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Clean up inactive Honeycomb datasets and columns")
     parser.add_argument("--days", type=int, default=60, help="Days to look back for activity (default: 60)")
     parser.add_argument("--delete", action="store_true", help="Enable deletion mode")
-    parser.add_argument("--delete-protected", action="store_true", help="Also delete datasets with deletion protection enabled")
-    parser.add_argument("--name", "-n", action="append", help="Only consider datasets with these names for deletion (can be used multiple times)")
+    parser.add_argument(
+        "--delete-protected", action="store_true", help="Also delete datasets with deletion protection enabled"
+    )
+    parser.add_argument(
+        "--name",
+        "-n",
+        action="append",
+        help="Only consider datasets with these names for deletion (can be used multiple times)",
+    )
     parser.add_argument("--check-columns", action="store_true", help="Check for unused columns in active datasets")
-    parser.add_argument("--delete-columns", action="store_true", help="Enable deletion of unused columns (requires --check-columns)")
+    parser.add_argument(
+        "--delete-columns", action="store_true", help="Enable deletion of unused columns (requires --check-columns)"
+    )
     parser.add_argument("--api-key", type=str, help="Honeycomb API key (overrides env var)")
     return parser.parse_args()
 
@@ -381,7 +379,7 @@ def process_column_cleanup(client, active_datasets, args):
     for i, dataset in enumerate(active_datasets):
         dataset_name = dataset.get("name", "Unknown")
         dataset_slug = dataset.get("slug", "")
-        print(f"  [{i+1}/{len(active_datasets)}] Checking {dataset_name} ({dataset_slug})...")
+        print(f"  [{i + 1}/{len(active_datasets)}] Checking {dataset_name} ({dataset_slug})...")
 
         result = check_columns_for_dataset(client, dataset, args.days)
         print(f"    Found {result['active']} active, {result['inactive']} inactive columns")
@@ -392,9 +390,7 @@ def process_column_cleanup(client, active_datasets, args):
 
             # Display inactive columns for this dataset
             display_columns_table(
-                result["inactive_columns"],
-                f"Inactive columns (last {args.days} days)",
-                result["dataset_name"]
+                result["inactive_columns"], f"Inactive columns (last {args.days} days)", result["dataset_name"]
             )
 
     print(f"\nFound {total_inactive_columns} inactive columns across {len(datasets_with_inactive_columns)} datasets")
@@ -410,7 +406,14 @@ def delete_columns(client, datasets_with_inactive_columns, total_inactive_column
     console.print("[bold red]⚠️ WARNING: COLUMN DELETION MODE ⚠️[/bold red]")
     console.print("[bold red]This action cannot be undone![/bold red]")
 
-    if Prompt.ask(f"\nDo you want to delete {total_inactive_columns} inactive columns?", default="no", choices=["yes I do", "no"]) == "no":
+    if (
+        Prompt.ask(
+            f"\nDo you want to delete {total_inactive_columns} inactive columns?",
+            default="no",
+            choices=["yes I do", "no"],
+        )
+        == "no"
+    ):
         print("Column deletion aborted.")
         return
 
@@ -444,7 +447,14 @@ def delete_datasets(client, inactive_datasets, args):
     console.print("[bold red]⚠️ WARNING: DATASET DELETION MODE ⚠️[/bold red]")
     console.print("[bold red]This action cannot be undone![/bold red]")
 
-    if Prompt.ask(f"\nDo you want to delete {len(inactive_datasets)} inactive datasets?", default="no", choices=["yes I do", "no"]) == "no":
+    if (
+        Prompt.ask(
+            f"\nDo you want to delete {len(inactive_datasets)} inactive datasets?",
+            default="no",
+            choices=["yes I do", "no"],
+        )
+        == "no"
+    ):
         print("Dataset deletion aborted.")
         return
 
@@ -501,7 +511,9 @@ def main():
         print("No inactive datasets found. Nothing to clean up!")
 
     if inactive_datasets:
-        display_datasets_table(inactive_datasets, f"Datasets with no activity in the last {args.days} days", team_slug, env_slug)
+        display_datasets_table(
+            inactive_datasets, f"Datasets with no activity in the last {args.days} days", team_slug, env_slug
+        )
 
     # Process column cleanup if requested
     if args.check_columns:
