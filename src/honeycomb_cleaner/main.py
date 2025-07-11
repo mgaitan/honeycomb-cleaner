@@ -338,9 +338,7 @@ def delete_columns(client, datasets_with_inactive_columns, total_inactive_column
         TaskProgressColumn(),
         TextColumn("[blue]({task.completed}/{task.total})[/blue]"),
     )
-    main_task = progress.add_task(
-        "Deleting columns...", total=total_inactive_columns
-    )
+    main_task = progress.add_task("Deleting columns...", total=total_inactive_columns)
 
     with Live(progress, refresh_per_second=10) as live:
         for dataset_info in datasets_with_inactive_columns:
@@ -375,18 +373,24 @@ def delete_columns(client, datasets_with_inactive_columns, total_inactive_column
                 progress.advance(main_task)
 
     # Print summary after progress bar is complete
-    console.print(f"\n[bold green]✓ Deleted {deleted_columns} columns successfully[/bold green]")
+    console.print(
+        f"\n[bold green]✓ Deleted {deleted_columns} columns successfully[/bold green]"
+    )
 
     if failed_columns:
         total_failed = sum(len(items) for items in failed_columns.values())
-        console.print(f"[bold red]✗ Failed to delete {total_failed} columns:[/bold red]")
+        console.print(
+            f"[bold red]✗ Failed to delete {total_failed} columns:[/bold red]"
+        )
         for error_reason, items in failed_columns.items():
             console.print(f"\n[red]  {error_reason}:[/red]")
             for item in items:
                 console.print(f"    - {item}")
 
     total_failed = sum(len(items) for items in failed_columns.values())
-    console.print(f"\n[bold blue]Summary: {deleted_columns} deleted, {total_failed} failed out of {total_inactive_columns} total[/bold blue]")
+    console.print(
+        f"\n[bold blue]Summary: {deleted_columns} deleted, {total_failed} failed out of {total_inactive_columns} total[/bold blue]"
+    )
 
 
 def delete_datasets(client, inactive_datasets, args):
@@ -418,9 +422,7 @@ def delete_datasets(client, inactive_datasets, args):
         TaskProgressColumn(),
         TextColumn("[blue]({task.completed}/{task.total})[/blue]"),
     )
-    main_task = progress.add_task(
-        "Deleting datasets...", total=len(inactive_datasets)
-    )
+    main_task = progress.add_task("Deleting datasets...", total=len(inactive_datasets))
 
     with Live(progress, refresh_per_second=10) as live:
         for dataset in inactive_datasets:
@@ -450,18 +452,24 @@ def delete_datasets(client, inactive_datasets, args):
             progress.advance(main_task)
 
     # Print summary after progress bar is complete
-    console.print(f"\n[bold green]✓ Deleted {deleted_count} datasets successfully[/bold green]")
+    console.print(
+        f"\n[bold green]✓ Deleted {deleted_count} datasets successfully[/bold green]"
+    )
 
     if failed_datasets:
         total_failed = sum(len(items) for items in failed_datasets.values())
-        console.print(f"[bold red]✗ Failed to delete {total_failed} datasets:[/bold red]")
+        console.print(
+            f"[bold red]✗ Failed to delete {total_failed} datasets:[/bold red]"
+        )
         for error_reason, items in failed_datasets.items():
             console.print(f"\n[red]  {error_reason}:[/red]")
             for item in items:
                 console.print(f"    - {item}")
 
     total_failed = sum(len(items) for items in failed_datasets.values())
-    console.print(f"\n[bold blue]Summary: {deleted_count} deleted, {total_failed} failed out of {len(inactive_datasets)} total[/bold blue]")
+    console.print(
+        f"\n[bold blue]Summary: {deleted_count} deleted, {total_failed} failed out of {len(inactive_datasets)} total[/bold blue]"
+    )
 
 
 @handle_keyboard_interrupt

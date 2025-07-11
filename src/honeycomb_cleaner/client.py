@@ -36,7 +36,9 @@ class HoneycombClient:
         if not retry_after:
             # Fallback to a default wait time if no header is present
             if not self.quiet:
-                self.console.print("[yellow]Rate limited but no Retry-After header found, waiting 60 seconds...[/yellow]")
+                self.console.print(
+                    "[yellow]Rate limited but no Retry-After header found, waiting 60 seconds...[/yellow]"
+                )
             time.sleep(60)
             return
 
@@ -61,7 +63,9 @@ class HoneycombClient:
 
         except (ValueError, TypeError) as e:
             if not self.quiet:
-                self.console.print(f"[red]Error parsing Retry-After header '{retry_after}': {e}[/red]")
+                self.console.print(
+                    f"[red]Error parsing Retry-After header '{retry_after}': {e}[/red]"
+                )
                 self.console.print("[yellow]Waiting 60 seconds as fallback...[/yellow]")
             time.sleep(60)
 
@@ -81,7 +85,9 @@ class HoneycombClient:
 
             except requests.exceptions.RequestException as e:
                 if attempt < max_retries - 1:
-                    self.console.print(f"[yellow]Request failed, retrying... ({e})[/yellow]")
+                    self.console.print(
+                        f"[yellow]Request failed, retrying... ({e})[/yellow]"
+                    )
                     time.sleep(1)
                     continue
                 raise
@@ -119,10 +125,16 @@ class HoneycombClient:
             return response.json()
         except requests.exceptions.RequestException as e:
             if hasattr(e, "response") and e.response.status_code == 401:
-                self.console.print(f"[red]Error fetching columns for {dataset_slug}: Unauthorized (401)[/red]")
-                self.console.print("[red]  → API key may lack 'Manage Queries and Columns' permission[/red]")
+                self.console.print(
+                    f"[red]Error fetching columns for {dataset_slug}: Unauthorized (401)[/red]"
+                )
+                self.console.print(
+                    "[red]  → API key may lack 'Manage Queries and Columns' permission[/red]"
+                )
             else:
-                self.console.print(f"[red]Error fetching columns for {dataset_slug}: {e}[/red]")
+                self.console.print(
+                    f"[red]Error fetching columns for {dataset_slug}: {e}[/red]"
+                )
             return []
 
     def delete_column(self, dataset_slug: str, column_id: str) -> bool:
@@ -143,7 +155,7 @@ class HoneycombClient:
                     if "error" in error_details:
                         if not self.quiet:
                             print(f"  → {error_details['error']}")
-                        self.last_error = error_details['error']
+                        self.last_error = error_details["error"]
                 except (ValueError, KeyError):
                     self.last_error = f"HTTP {status_code}"
             else:
@@ -178,11 +190,15 @@ class HoneycombClient:
             if hasattr(e, "response") and e.response is not None:
                 status_code = e.response.status_code
                 if not self.quiet:
-                    print(f"FAILED - Error {status_code} disabling protection for {dataset_slug}")
+                    print(
+                        f"FAILED - Error {status_code} disabling protection for {dataset_slug}"
+                    )
                 self.last_error = f"HTTP {status_code}"
             else:
                 if not self.quiet:
-                    print(f"FAILED - Error disabling protection for {dataset_slug}: {e}")
+                    print(
+                        f"FAILED - Error disabling protection for {dataset_slug}: {e}"
+                    )
                 self.last_error = str(e)
             return False
 
@@ -227,7 +243,7 @@ class HoneycombClient:
             if "error" in error_details:
                 if not self.quiet:
                     print(f"  → {error_details['error']}")
-                self.last_error = error_details['error']
+                self.last_error = error_details["error"]
         except (ValueError, KeyError):
             self.last_error = f"HTTP {status_code}"
         return False
