@@ -4,9 +4,18 @@ import sys
 from datetime import datetime, timedelta
 from functools import wraps
 
-from rich.console import Console
+from rich.console import Console, Group
+from rich.live import Live
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+)
 from rich.prompt import Prompt
 from rich.table import Table
+from rich.text import Text
 
 from .client import HoneycombClient
 
@@ -224,7 +233,7 @@ def setup_client(args):
         print("Set it with: export HONEYCOMB_API_KEY=your_api_key_here")
         sys.exit(1)
 
-    return HoneycombClient(api_key)
+    return HoneycombClient(api_key, console)
 
 
 def categorize_datasets(datasets, args):
@@ -316,29 +325,68 @@ def delete_columns(client, datasets_with_inactive_columns, total_inactive_column
         print("Column deletion aborted.")
         return
 
-    print(f"\nDeleting {total_inactive_columns} columns...")
     deleted_columns = 0
+    failed_columns = {}  # Dictionary to group by error reason
 
-    for dataset_info in datasets_with_inactive_columns:
-        dataset_name = dataset_info["dataset_name"]
-        dataset_slug = dataset_info["dataset_slug"]
+    # Create a quiet client for deletion operations
+    quiet_client = HoneycombClient(client.api_key, console, quiet=True)
 
-        print(f"\nDataset: {dataset_name}")
-        for column in dataset_info["inactive_columns"]:
-            column_name = column.get("key_name", "Unknown")
-            column_id = column.get("id", "")
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TextColumn("[blue]({task.completed}/{task.total})[/blue]"),
+    )
+    main_task = progress.add_task(
+        "Deleting columns...", total=total_inactive_columns
+    )
 
-            if not column_id:
-                print(f"  Skipping {column_name}: no ID found")
-                continue
+    with Live(progress, refresh_per_second=10) as live:
+        for dataset_info in datasets_with_inactive_columns:
+            dataset_name = dataset_info["dataset_name"]
+            dataset_slug = dataset_info["dataset_slug"]
 
-            print(f"  Deleting column {column_name}... ", end="", flush=True)
+            for column in dataset_info["inactive_columns"]:
+                column_name = column.get("key_name", "Unknown")
+                column_id = column.get("id", "")
 
-            if client.delete_column(dataset_slug, column_id):
-                print("OK")
-                deleted_columns += 1
+                if not column_id:
+                    progress.advance(main_task)
+                    continue
 
-    print(f"\nDeleted {deleted_columns} out of {total_inactive_columns} columns.")
+                current_item = f"{column_name} from {dataset_name}"
+                progress.update(main_task, description="Deleting column...")
+
+                # Update live display with current item
+                current_text = Text(f"Deleting: {current_item}", style="dim")
+                live.update(Group(progress, current_text))
+
+                success = quiet_client.delete_column(dataset_slug, column_id)
+                if success:
+                    deleted_columns += 1
+                else:
+                    # Group failures by error reason
+                    error_reason = quiet_client.last_error or "Unknown error"
+                    if error_reason not in failed_columns:
+                        failed_columns[error_reason] = []
+                    failed_columns[error_reason].append(current_item)
+
+                progress.advance(main_task)
+
+    # Print summary after progress bar is complete
+    console.print(f"\n[bold green]✓ Deleted {deleted_columns} columns successfully[/bold green]")
+
+    if failed_columns:
+        total_failed = sum(len(items) for items in failed_columns.values())
+        console.print(f"[bold red]✗ Failed to delete {total_failed} columns:[/bold red]")
+        for error_reason, items in failed_columns.items():
+            console.print(f"\n[red]  {error_reason}:[/red]")
+            for item in items:
+                console.print(f"    - {item}")
+
+    total_failed = sum(len(items) for items in failed_columns.values())
+    console.print(f"\n[bold blue]Summary: {deleted_columns} deleted, {total_failed} failed out of {total_inactive_columns} total[/bold blue]")
 
 
 def delete_datasets(client, inactive_datasets, args):
@@ -357,24 +405,63 @@ def delete_datasets(client, inactive_datasets, args):
         print("Dataset deletion aborted.")
         return
 
-    print(f"\nDeleting {len(inactive_datasets)} datasets...")
     deleted_count = 0
+    failed_datasets = {}  # Dictionary to group by error reason
 
-    for dataset in inactive_datasets:
-        name = dataset.get("name", "Unknown")
-        slug = dataset.get("slug", "")
+    # Create a quiet client for deletion operations
+    quiet_client = HoneycombClient(client.api_key, console, quiet=True)
 
-        if not slug:
-            print(f"Skipping {name}: no slug found")
-            continue
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TextColumn("[blue]({task.completed}/{task.total})[/blue]"),
+    )
+    main_task = progress.add_task(
+        "Deleting datasets...", total=len(inactive_datasets)
+    )
 
-        print(f"Deleting {name}... ", end="", flush=True)
+    with Live(progress, refresh_per_second=10) as live:
+        for dataset in inactive_datasets:
+            name = dataset.get("name", "Unknown")
+            slug = dataset.get("slug", "")
 
-        if client.delete_dataset(slug, args.delete_protected):
-            print("OK")
-            deleted_count += 1
+            if not slug:
+                progress.advance(main_task)
+                continue
 
-    print(f"\nDeleted {deleted_count} out of {len(inactive_datasets)} datasets.")
+            progress.update(main_task, description="Deleting dataset...")
+
+            # Update live display with current item
+            current_text = Text(f"Deleting: {name}", style="dim")
+            live.update(Group(progress, current_text))
+
+            success = quiet_client.delete_dataset(slug, args.delete_protected)
+            if success:
+                deleted_count += 1
+            else:
+                # Group failures by error reason
+                error_reason = quiet_client.last_error or "Unknown error"
+                if error_reason not in failed_datasets:
+                    failed_datasets[error_reason] = []
+                failed_datasets[error_reason].append(name)
+
+            progress.advance(main_task)
+
+    # Print summary after progress bar is complete
+    console.print(f"\n[bold green]✓ Deleted {deleted_count} datasets successfully[/bold green]")
+
+    if failed_datasets:
+        total_failed = sum(len(items) for items in failed_datasets.values())
+        console.print(f"[bold red]✗ Failed to delete {total_failed} datasets:[/bold red]")
+        for error_reason, items in failed_datasets.items():
+            console.print(f"\n[red]  {error_reason}:[/red]")
+            for item in items:
+                console.print(f"    - {item}")
+
+    total_failed = sum(len(items) for items in failed_datasets.values())
+    console.print(f"\n[bold blue]Summary: {deleted_count} deleted, {total_failed} failed out of {len(inactive_datasets)} total[/bold blue]")
 
 
 @handle_keyboard_interrupt
