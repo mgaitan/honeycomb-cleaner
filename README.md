@@ -14,6 +14,7 @@ A command-line tool to clean up inactive datasets and columns in Honeycomb to re
 - 🛡️ **Protection Handling**: Automatically disable deletion protection when needed
 - 🎯 **Selective Targeting**: Filter by specific dataset names
 - 📋 **Rich Tables**: Beautiful output with clickable dataset URLs
+- 📊 **Progress Bars**: Real-time progress tracking with error grouping
 - ⚠️ **Safety First**: Multiple confirmations before deletion
 
 ## Run / Installation
@@ -144,6 +145,26 @@ Inactive columns (last 60 days) - current-service (showing first 100 of 245)
 │ legacy_attribute                │ string │ 2023-03-01 │ 2023-06-01 │ No     │
 └─────────────────────────────────┴────────┴────────────┴────────────┴────────┘
 ... and 145 more columns
+
+⚠️ WARNING: COLUMN DELETION MODE ⚠️
+This action cannot be undone!
+
+Do you want to delete 245 inactive columns? (yes I do/no): yes I do
+
+ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% (245/245)
+Deleting: legacy_attribute from current-service
+
+✓ Deleted 242 columns successfully
+✗ Failed to delete 3 columns:
+
+  HTTP 404:
+    - missing_column from old-service
+    - deleted_field from test-dataset
+
+  Column not found:
+    - nonexistent_column from active-logs
+
+Summary: 242 deleted, 3 failed out of 245 total
 ```
 
 ## Safety Features
@@ -151,6 +172,8 @@ Inactive columns (last 60 days) - current-service (showing first 100 of 245)
 - **Environment Display**: Shows which Honeycomb environment you're working with
 - **Multiple Confirmations**: Requires explicit confirmation before deletion
 - **Exact Text Matching**: Must type "yes I do" exactly for final confirmation
+- **Progress Tracking**: Real-time progress bars with current item display
+- **Error Grouping**: Failed operations are grouped by error type for easy debugging
 - **Error Handling**: Clear error messages for API failures
 - **Dry Run Mode**: Preview what would be deleted without `--delete` flags
 

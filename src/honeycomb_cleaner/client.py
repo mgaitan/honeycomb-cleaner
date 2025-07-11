@@ -3,6 +3,7 @@ import time
 from datetime import datetime, timezone
 
 import requests
+from rich.console import Console
 
 # Example usage of rate limiting:
 # The client will automatically handle 429 responses by:
@@ -16,8 +17,11 @@ import requests
 class HoneycombClient:
     """Client for interacting with Honeycomb API"""
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, console: Console = None, quiet: bool = False):
         self.api_key = api_key
+        self.console = console or Console()
+        self.quiet = quiet
+        self.last_error = None
         self.session = requests.Session()
         self.session.headers.update(
             {"X-Honeycomb-Team": api_key, "Content-Type": "application/json"}
@@ -31,7 +35,10 @@ class HoneycombClient:
         retry_after = response.headers.get("Retry-After")
         if not retry_after:
             # Fallback to a default wait time if no header is present
-            print("Rate limited but no Retry-After header found, waiting 60 seconds...")
+            if not self.quiet:
+                self.console.print(
+                    "[yellow]Rate limited but no Retry-After header found, waiting 60 seconds...[/yellow]"
+                )
             time.sleep(60)
             return
 
@@ -48,14 +55,18 @@ class HoneycombClient:
                 wait_seconds = max(0, (retry_time - now).total_seconds())
 
             if wait_seconds > 0:
-                print(
-                    f"Rate limited, waiting {wait_seconds:.0f} seconds until {retry_after}..."
-                )
+                if not self.quiet:
+                    self.console.print(
+                        f"[yellow]Rate limited, waiting {wait_seconds:.0f} seconds until {retry_after}...[/yellow]"
+                    )
                 time.sleep(wait_seconds)
 
         except (ValueError, TypeError) as e:
-            print(f"Error parsing Retry-After header '{retry_after}': {e}")
-            print("Waiting 60 seconds as fallback...")
+            if not self.quiet:
+                self.console.print(
+                    f"[red]Error parsing Retry-After header '{retry_after}': {e}[/red]"
+                )
+                self.console.print("[yellow]Waiting 60 seconds as fallback...[/yellow]")
             time.sleep(60)
 
     def _make_request_with_retry(self, method, url, **kwargs):
@@ -74,7 +85,9 @@ class HoneycombClient:
 
             except requests.exceptions.RequestException as e:
                 if attempt < max_retries - 1:
-                    print(f"Request failed, retrying... ({e})")
+                    self.console.print(
+                        f"[yellow]Request failed, retrying... ({e})[/yellow]"
+                    )
                     time.sleep(1)
                     continue
                 raise
@@ -96,7 +109,7 @@ class HoneycombClient:
                 "team": auth_info.get("team", {"name": "Unknown", "slug": "unknown"}),
             }
         except requests.exceptions.RequestException as e:
-            print(f"Error fetching environment info: {e}")
+            self.console.print(f"[red]Error fetching environment info: {e}[/red]")
             return {
                 "environment": {"name": "Unknown", "slug": "unknown"},
                 "team": {"name": "Unknown", "slug": "unknown"},
@@ -112,10 +125,16 @@ class HoneycombClient:
             return response.json()
         except requests.exceptions.RequestException as e:
             if hasattr(e, "response") and e.response.status_code == 401:
-                print(f"Error fetching columns for {dataset_slug}: Unauthorized (401)")
-                print("  → API key may lack 'Manage Queries and Columns' permission")
+                self.console.print(
+                    f"[red]Error fetching columns for {dataset_slug}: Unauthorized (401)[/red]"
+                )
+                self.console.print(
+                    "[red]  → API key may lack 'Manage Queries and Columns' permission[/red]"
+                )
             else:
-                print(f"Error fetching columns for {dataset_slug}: {e}")
+                self.console.print(
+                    f"[red]Error fetching columns for {dataset_slug}: {e}[/red]"
+                )
             return []
 
     def delete_column(self, dataset_slug: str, column_id: str) -> bool:
@@ -129,15 +148,20 @@ class HoneycombClient:
         except requests.exceptions.RequestException as e:
             if hasattr(e, "response") and e.response is not None:
                 status_code = e.response.status_code
-                print(f"FAILED - Error {status_code} deleting column {column_id}")
+                if not self.quiet:
+                    print(f"FAILED - Error {status_code} deleting column {column_id}")
                 try:
                     error_details = e.response.json()
                     if "error" in error_details:
-                        print(f"  → {error_details['error']}")
+                        if not self.quiet:
+                            print(f"  → {error_details['error']}")
+                        self.last_error = error_details["error"]
                 except (ValueError, KeyError):
-                    pass
+                    self.last_error = f"HTTP {status_code}"
             else:
-                print(f"FAILED - Error deleting column {column_id}: {e}")
+                if not self.quiet:
+                    print(f"FAILED - Error deleting column {column_id}: {e}")
+                self.last_error = str(e)
             return False
 
     def get_datasets(self) -> list[dict]:
@@ -149,7 +173,7 @@ class HoneycombClient:
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            print(f"Error fetching datasets: {e}")
+            self.console.print(f"[red]Error fetching datasets: {e}[/red]")
             sys.exit(1)
 
     def disable_deletion_protection(self, dataset_slug: str) -> bool:
@@ -165,11 +189,17 @@ class HoneycombClient:
         except requests.exceptions.RequestException as e:
             if hasattr(e, "response") and e.response is not None:
                 status_code = e.response.status_code
-                print(
-                    f"FAILED - Error {status_code} disabling protection for {dataset_slug}"
-                )
+                if not self.quiet:
+                    print(
+                        f"FAILED - Error {status_code} disabling protection for {dataset_slug}"
+                    )
+                self.last_error = f"HTTP {status_code}"
             else:
-                print(f"FAILED - Error disabling protection for {dataset_slug}: {e}")
+                if not self.quiet:
+                    print(
+                        f"FAILED - Error disabling protection for {dataset_slug}: {e}"
+                    )
+                self.last_error = str(e)
             return False
 
     def delete_dataset(
@@ -190,7 +220,9 @@ class HoneycombClient:
     ) -> bool:
         """Handle deletion errors with protection retry logic"""
         if not hasattr(e, "response") or e.response is None:
-            print(f"FAILED - Error deleting {dataset_slug}: {e}")
+            if not self.quiet:
+                print(f"FAILED - Error deleting {dataset_slug}: {e}")
+            self.last_error = str(e)
             return False
 
         status_code = e.response.status_code
@@ -204,7 +236,16 @@ class HoneycombClient:
             return self._retry_delete_after_unprotect(dataset_slug, url)
 
         # Handle other errors
-        self._print_delete_error(e.response, dataset_slug)
+        if not self.quiet:
+            print(f"FAILED - Error {status_code} deleting {dataset_slug}")
+        try:
+            error_details = e.response.json()
+            if "error" in error_details:
+                if not self.quiet:
+                    print(f"  → {error_details['error']}")
+                self.last_error = error_details["error"]
+        except (ValueError, KeyError):
+            self.last_error = f"HTTP {status_code}"
         return False
 
     def _is_deletion_protected(self, response) -> bool:
@@ -223,22 +264,42 @@ class HoneycombClient:
 
     def _retry_delete_after_unprotect(self, dataset_slug: str, url: str) -> bool:
         """Disable protection and retry deletion"""
-        print("deletion protection detected, disabling... ", end="", flush=True)
+        if not self.quiet:
+            print("deletion protection detected, disabling... ", end="", flush=True)
 
         if not self.disable_deletion_protection(dataset_slug):
             return False
 
-        print("retrying delete... ", end="", flush=True)
+        if not self.quiet:
+            print("retrying delete... ", end="", flush=True)
         try:
             response = self._make_request_with_retry("DELETE", url)
             response.raise_for_status()
             return True
         except requests.exceptions.RequestException as retry_e:
             if hasattr(retry_e, "response") and retry_e.response is not None:
-                print(f"FAILED - Error {retry_e.response.status_code} on retry")
+                if not self.quiet:
+                    print(f"FAILED - Error {retry_e.response.status_code} on retry")
+                self.last_error = f"HTTP {retry_e.response.status_code}"
             else:
-                print(f"FAILED - Error on retry: {retry_e}")
+                if not self.quiet:
+                    print(f"FAILED - Error on retry: {retry_e}")
+                self.last_error = str(retry_e)
             return False
+
+    def get_error_details(self, response) -> str:
+        """Get formatted error details from response"""
+        if not response:
+            return "Unknown error"
+
+        try:
+            error_details = response.json()
+            if "error" in error_details:
+                return error_details["error"]
+        except (ValueError, KeyError):
+            pass
+
+        return f"HTTP {response.status_code}"
 
     def _print_delete_error(self, response, dataset_slug: str):
         """Print formatted deletion error"""
