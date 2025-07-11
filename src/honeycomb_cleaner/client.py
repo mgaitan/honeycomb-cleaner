@@ -1,5 +1,16 @@
 import sys
+import time
+from datetime import datetime, timezone
+
 import requests
+
+# Example usage of rate limiting:
+# The client will automatically handle 429 responses by:
+# 1. Checking the Retry-After header
+# 2. Parsing it as seconds (integer) or HTTP date string
+# 3. Sleeping until the retry time
+# 4. Retrying the request up to 3 times
+# 5. Falling back to 60 seconds if no Retry-After header is present
 
 
 class HoneycombClient:
@@ -12,12 +23,70 @@ class HoneycombClient:
             {"X-Honeycomb-Team": api_key, "Content-Type": "application/json"}
         )
 
+    def _handle_rate_limit(self, response):
+        """Handle 429 rate limit responses by sleeping until retry time"""
+        if response.status_code != 429:
+            return
+
+        retry_after = response.headers.get("Retry-After")
+        if not retry_after:
+            # Fallback to a default wait time if no header is present
+            print("Rate limited but no Retry-After header found, waiting 60 seconds...")
+            time.sleep(60)
+            return
+
+        try:
+            # Retry-After can be either seconds or an HTTP date
+            if retry_after.isdigit():
+                # It's seconds
+                wait_seconds = int(retry_after)
+            else:
+                # It's an HTTP date, parse it
+                retry_time = datetime.strptime(retry_after, "%a, %d %b %Y %H:%M:%S %Z")
+                retry_time = retry_time.replace(tzinfo=timezone.utc)
+                now = datetime.now(timezone.utc)
+                wait_seconds = max(0, (retry_time - now).total_seconds())
+
+            if wait_seconds > 0:
+                print(
+                    f"Rate limited, waiting {wait_seconds:.0f} seconds until {retry_after}..."
+                )
+                time.sleep(wait_seconds)
+
+        except (ValueError, TypeError) as e:
+            print(f"Error parsing Retry-After header '{retry_after}': {e}")
+            print("Waiting 60 seconds as fallback...")
+            time.sleep(60)
+
+    def _make_request_with_retry(self, method, url, **kwargs):
+        """Make a request with automatic retry on rate limiting"""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = self.session.request(method, url, **kwargs)
+
+                if response.status_code == 429:
+                    if attempt < max_retries - 1:  # Don't sleep on the last attempt
+                        self._handle_rate_limit(response)
+                        continue
+
+                return response
+
+            except requests.exceptions.RequestException as e:
+                if attempt < max_retries - 1:
+                    print(f"Request failed, retrying... ({e})")
+                    time.sleep(1)
+                    continue
+                raise
+
+        return response
+
     def get_environment_info(self) -> dict:
         """Fetch environment information"""
         url = "https://api.honeycomb.io/1/auth"
 
         try:
-            response = self.session.get(url)
+            response = self._make_request_with_retry("GET", url)
             response.raise_for_status()
             auth_info = response.json()
             return {
@@ -38,7 +107,7 @@ class HoneycombClient:
         url = f"https://api.honeycomb.io/1/columns/{dataset_slug}"
 
         try:
-            response = self.session.get(url)
+            response = self._make_request_with_retry("GET", url)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
@@ -54,7 +123,7 @@ class HoneycombClient:
         url = f"https://api.honeycomb.io/1/columns/{dataset_slug}/{column_id}"
 
         try:
-            response = self.session.delete(url)
+            response = self._make_request_with_retry("DELETE", url)
             response.raise_for_status()
             return True
         except requests.exceptions.RequestException as e:
@@ -76,7 +145,7 @@ class HoneycombClient:
         url = "https://api.honeycomb.io/1/datasets"
 
         try:
-            response = self.session.get(url)
+            response = self._make_request_with_retry("GET", url)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
@@ -90,7 +159,7 @@ class HoneycombClient:
         payload = {"settings": {"delete_protected": False}}
 
         try:
-            response = self.session.put(url, json=payload)
+            response = self._make_request_with_retry("PUT", url, json=payload)
             response.raise_for_status()
             return True
         except requests.exceptions.RequestException as e:
@@ -110,7 +179,7 @@ class HoneycombClient:
         url = f"https://api.honeycomb.io/1/datasets/{dataset_slug}"
 
         try:
-            response = self.session.delete(url)
+            response = self._make_request_with_retry("DELETE", url)
             response.raise_for_status()
             return True
         except requests.exceptions.RequestException as e:
@@ -161,7 +230,7 @@ class HoneycombClient:
 
         print("retrying delete... ", end="", flush=True)
         try:
-            response = self.session.delete(url)
+            response = self._make_request_with_retry("DELETE", url)
             response.raise_for_status()
             return True
         except requests.exceptions.RequestException as retry_e:
