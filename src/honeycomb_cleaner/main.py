@@ -2,6 +2,7 @@ import argparse
 import os
 import sys
 from datetime import datetime, timedelta
+from functools import wraps
 
 from rich.console import Console
 from rich.prompt import Prompt
@@ -10,6 +11,20 @@ from rich.table import Table
 from .client import HoneycombClient
 
 console = Console()
+
+
+def handle_keyboard_interrupt(func):
+    """Decorator to catch KeyboardInterrupt and print 'Aborted'"""
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except KeyboardInterrupt:
+            console.print("\n[bold red]Aborted[/bold red]")
+            sys.exit(130)
+
+    return wrapper
 
 
 def is_column_inactive(column: dict, days: int) -> bool:
@@ -244,39 +259,45 @@ def process_column_cleanup(client, active_datasets, args):
     total_inactive_columns = 0
     datasets_with_inactive_columns = []
 
-    for i, dataset in enumerate(active_datasets):
-        dataset_name = dataset.get("name", "Unknown")
-        dataset_slug = dataset.get("slug", "")
-        print(
-            f"  [{i + 1}/{len(active_datasets)}] Checking {dataset_name} ({dataset_slug})..."
-        )
-
-        result = check_columns_for_dataset(client, dataset, args.days)
-        print(
-            f"    Found {result['active']} active, {result['inactive']} inactive columns"
-        )
-
-        if result["inactive"] > 0:
-            datasets_with_inactive_columns.append(result)
-            total_inactive_columns += result["inactive"]
-
-            # Display inactive columns for this dataset
-            display_columns_table(
-                result["inactive_columns"],
-                f"Inactive columns (last {args.days} days)",
-                result["dataset_name"],
+    try:
+        for i, dataset in enumerate(active_datasets):
+            dataset_name = dataset.get("name", "Unknown")
+            dataset_slug = dataset.get("slug", "")
+            print(
+                f"  [{i + 1}/{len(active_datasets)}] Checking {dataset_name} ({dataset_slug})..."
             )
 
-    print(
-        f"\nFound {total_inactive_columns} inactive columns across {len(datasets_with_inactive_columns)} datasets"
-    )
+            result = check_columns_for_dataset(client, dataset, args.days)
+            print(
+                f"    Found {result['active']} active, {result['inactive']} inactive columns"
+            )
 
-    if total_inactive_columns > 0 and args.delete_columns:
-        delete_columns(client, datasets_with_inactive_columns, total_inactive_columns)
-    elif total_inactive_columns > 0:
+            if result["inactive"] > 0:
+                datasets_with_inactive_columns.append(result)
+                total_inactive_columns += result["inactive"]
+
+                # Display inactive columns for this dataset
+                display_columns_table(
+                    result["inactive_columns"],
+                    f"Inactive columns (last {args.days} days)",
+                    result["dataset_name"],
+                )
+
         print(
-            f"\nTo delete these columns, run: honeycomb-cleaner --check-columns --delete-columns --days {args.days}"
+            f"\nFound {total_inactive_columns} inactive columns across {len(datasets_with_inactive_columns)} datasets"
         )
+
+        if total_inactive_columns > 0 and args.delete_columns:
+            delete_columns(
+                client, datasets_with_inactive_columns, total_inactive_columns
+            )
+        elif total_inactive_columns > 0:
+            print(
+                f"\nTo delete these columns, run: honeycomb-cleaner --check-columns --delete-columns --days {args.days}"
+            )
+    except KeyboardInterrupt:
+        print("\nAborted")
+        sys.exit(0)
 
 
 def delete_columns(client, datasets_with_inactive_columns, total_inactive_columns):
@@ -356,6 +377,7 @@ def delete_datasets(client, inactive_datasets, args):
     print(f"\nDeleted {deleted_count} out of {len(inactive_datasets)} datasets.")
 
 
+@handle_keyboard_interrupt
 def main():
     args = parse_arguments()
     client = setup_client(args)
