@@ -15,6 +15,7 @@ console = Console()
 
 def handle_keyboard_interrupt(func):
     """Decorator to catch KeyboardInterrupt and print 'Aborted'"""
+
     @wraps(func)
     def wrapper(*args, **kwargs):
         try:
@@ -22,6 +23,7 @@ def handle_keyboard_interrupt(func):
         except KeyboardInterrupt:
             console.print("\n[bold red]Aborted[/bold red]")
             sys.exit(130)
+
     return wrapper
 
 
@@ -286,7 +288,9 @@ def process_column_cleanup(client, active_datasets, args):
         )
 
         if total_inactive_columns > 0 and args.delete_columns:
-            delete_columns(client, datasets_with_inactive_columns, total_inactive_columns)
+            delete_columns(
+                client, datasets_with_inactive_columns, total_inactive_columns
+            )
         elif total_inactive_columns > 0:
             print(
                 f"\nTo delete these columns, run: honeycomb-cleaner --check-columns --delete-columns --days {args.days}"
