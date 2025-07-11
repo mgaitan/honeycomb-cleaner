@@ -28,7 +28,7 @@ class HoneycombClient:
         if response.status_code != 429:
             return
 
-        retry_after = response.headers.get('Retry-After')
+        retry_after = response.headers.get("Retry-After")
         if not retry_after:
             # Fallback to a default wait time if no header is present
             print("Rate limited but no Retry-After header found, waiting 60 seconds...")
@@ -42,13 +42,15 @@ class HoneycombClient:
                 wait_seconds = int(retry_after)
             else:
                 # It's an HTTP date, parse it
-                retry_time = datetime.strptime(retry_after, '%a, %d %b %Y %H:%M:%S %Z')
+                retry_time = datetime.strptime(retry_after, "%a, %d %b %Y %H:%M:%S %Z")
                 retry_time = retry_time.replace(tzinfo=timezone.utc)
                 now = datetime.now(timezone.utc)
                 wait_seconds = max(0, (retry_time - now).total_seconds())
 
             if wait_seconds > 0:
-                print(f"Rate limited, waiting {wait_seconds:.0f} seconds until {retry_after}...")
+                print(
+                    f"Rate limited, waiting {wait_seconds:.0f} seconds until {retry_after}..."
+                )
                 time.sleep(wait_seconds)
 
         except (ValueError, TypeError) as e:
@@ -84,7 +86,7 @@ class HoneycombClient:
         url = "https://api.honeycomb.io/1/auth"
 
         try:
-            response = self._make_request_with_retry('GET', url)
+            response = self._make_request_with_retry("GET", url)
             response.raise_for_status()
             auth_info = response.json()
             return {
@@ -105,7 +107,7 @@ class HoneycombClient:
         url = f"https://api.honeycomb.io/1/columns/{dataset_slug}"
 
         try:
-            response = self._make_request_with_retry('GET', url)
+            response = self._make_request_with_retry("GET", url)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
@@ -121,7 +123,7 @@ class HoneycombClient:
         url = f"https://api.honeycomb.io/1/columns/{dataset_slug}/{column_id}"
 
         try:
-            response = self._make_request_with_retry('DELETE', url)
+            response = self._make_request_with_retry("DELETE", url)
             response.raise_for_status()
             return True
         except requests.exceptions.RequestException as e:
@@ -143,7 +145,7 @@ class HoneycombClient:
         url = "https://api.honeycomb.io/1/datasets"
 
         try:
-            response = self._make_request_with_retry('GET', url)
+            response = self._make_request_with_retry("GET", url)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
@@ -157,7 +159,7 @@ class HoneycombClient:
         payload = {"settings": {"delete_protected": False}}
 
         try:
-            response = self._make_request_with_retry('PUT', url, json=payload)
+            response = self._make_request_with_retry("PUT", url, json=payload)
             response.raise_for_status()
             return True
         except requests.exceptions.RequestException as e:
@@ -177,7 +179,7 @@ class HoneycombClient:
         url = f"https://api.honeycomb.io/1/datasets/{dataset_slug}"
 
         try:
-            response = self._make_request_with_retry('DELETE', url)
+            response = self._make_request_with_retry("DELETE", url)
             response.raise_for_status()
             return True
         except requests.exceptions.RequestException as e:
@@ -228,7 +230,7 @@ class HoneycombClient:
 
         print("retrying delete... ", end="", flush=True)
         try:
-            response = self._make_request_with_retry('DELETE', url)
+            response = self._make_request_with_retry("DELETE", url)
             response.raise_for_status()
             return True
         except requests.exceptions.RequestException as retry_e:
